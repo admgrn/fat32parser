@@ -7,3 +7,6 @@ filesys.x: main.cpp filesys.o
 
 filesys.o : filesys.h filesys.cpp
 	$(CC) -o filesys.o -c filesys.cpp	
+
+clean : 
+	rm *.o *.x

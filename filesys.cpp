@@ -8,8 +8,11 @@
 #include <cctype>
 #include <algorithm>
 
+// Sets mask to take lower 28 bits
 #define FATMASK 0x0FFFFFFF
+// Values of this and higher indicate EoC
 #define FATEND 0x0FFFFFF8
+// File is not Allocated
 #define DEALLOC 0xe5
 
 Filesys::Filesys(std::string fname) : mFilesys_(0), 
@@ -23,6 +26,8 @@ Filesys::Filesys(std::string fname) : mFilesys_(0),
                                       openTable_()
 {
   struct stat fstatus;
+
+  // Open File Descripter
   fd_ = open(fname_.c_str(), O_RDWR);
 
   if (fd_ < 0)
@@ -31,12 +36,14 @@ Filesys::Filesys(std::string fname) : mFilesys_(0),
     return;
   }
 
+  // Get File Stats
   if (fstat(fd_, &fstatus) < 0)
   {
     error_ = true;
     return;
   }
 
+  // Map file to array -> mFilesys_
   filesys_size_ = fstatus.st_size;
   mFilesys_ = (uint8_t*)mmap(0, filesys_size_, PROT_READ |
       PROT_WRITE | PROT_EXEC, MAP_SHARED, fd_, 0);
@@ -53,6 +60,15 @@ Filesys::Filesys(std::string fname) : mFilesys_(0),
   functions_.insert(std::make_pair("help", &Filesys::Help));
 }
 
+// Close file descriptor and unmaps files ystem
+Filesys::~Filesys()
+{
+  munmap(mFilesys_, filesys_size_);
+  if (fd_ >= 0)
+    close(fd_);
+}
+
+// Retreives and Validates information from the file system
 void Filesys::Validate()
 {
   if (error_)
@@ -91,11 +107,37 @@ void Filesys::Validate()
   location_ = "/";
 }
 
+// Returns string location
 std::string Filesys::GetLocation()
 {
   return location_;
 }
 
+// Returns if there is an error
+bool Filesys::HasError()
+{
+  return error_;
+}
+
+// Calls functions and passes them arguements
+bool Filesys::CallFunct(std::string& name, 
+                        std::vector<std::string>& argv)
+{
+  try
+  {
+    functions_.at(name)(*this, argv);
+  }
+  catch (std::exception &e)
+  {
+    return false;
+  }
+  return true;
+}
+
+// Gets list of files in specified cluster
+// if getDealloc is false, return only allocated files
+// if getDealloc is true, return only deallcoated files
+// Return value must be deallocated after use
 std::list<Filesys::FileEntry>* Filesys::GetFileList(uint32_t cluster, 
                                                     bool getDealloc)
 {
@@ -113,6 +155,7 @@ std::list<Filesys::FileEntry>* Filesys::GetFileList(uint32_t cluster,
 
   name[11] = '\0';
 
+  // Loop through each entry and navigate to next clusters if necessary
   do 
   {
     location = finfo_.BytesPerSec * 
@@ -132,6 +175,7 @@ std::list<Filesys::FileEntry>* Filesys::GetFileList(uint32_t cluster,
       if ((name[0] != 0 && (uint8_t)name[0] != DEALLOC && !getDealloc) ||
           ((name[0] == 0 || (uint8_t)name[0] == DEALLOC) && getDealloc))
       {
+        
         FileEntry entry(name, attr, lo, hi, size, location + (32 * i));
         list->push_back(entry);
       }
@@ -142,6 +186,7 @@ std::list<Filesys::FileEntry>* Filesys::GetFileList(uint32_t cluster,
   return list;
 }
 
+// Reads from filesystem into data
 template <typename T>
 void Filesys::ReadValue(T* data, size_t len, size_t pos, 
      size_t width)
@@ -157,6 +202,7 @@ void Filesys::ReadValue(T* data, size_t len, size_t pos,
   }
 }
 
+// Writes from data to filesystem
 template <typename T>
 void Filesys::WriteValue(T* data, size_t len, size_t pos, 
                          size_t width)
@@ -178,6 +224,7 @@ void Filesys::WriteValue(T* data, size_t len, size_t pos,
   }
 }
 
+// Goes to FAT and returns next cluster in the file
 uint32_t Filesys::GetNextClus(uint32_t cluster)
 {
   uint32_t entry;
@@ -187,18 +234,7 @@ uint32_t Filesys::GetNextClus(uint32_t cluster)
   return entry & FATMASK;
 }
 
-bool Filesys::HasError()
-{
-  return error_;
-}
-
-Filesys::~Filesys()
-{
-  munmap(mFilesys_, filesys_size_);
-  if (fd_ >= 0)
-    close(fd_);
-}
-
+// Calculates number of free clusters from FsInfo section 
 uint32_t Filesys::GetNFreeClus()
 {
   uint32_t value;
@@ -206,16 +242,19 @@ uint32_t Filesys::GetNFreeClus()
   return value;
 }
 
+// Calculation found on page 14 of specification
 uint32_t Filesys::Fat32Info::GetFirstSectorOfClus(uint32_t n)
 {
   return ((n - 2) * SecPerClus) + FirstDataSec; 
 }
 
+// Calculation found on page 15 of specification
 uint32_t Filesys::Fat32Info::GetThisFatSecN(uint32_t n)
 {
   return RsvdSecCnt + ((n * 4) / BytesPerSec);
 }
 
+// Calculation found on page 15 of specification
 uint32_t Filesys::Fat32Info::GetThisFatEntOff(uint32_t n)
 {
   return (n * 4) % BytesPerSec;
@@ -226,10 +265,14 @@ Filesys::FileEntry::FileEntry(char* n, uint8_t a, uint16_t l,
                             name(n), attr(a), lo(l), hi(h), size(s),
                             clus(), entryLoc(el), openInfo(0)
 {
+  // Cluster number broken into two seperate integers, this combines
+  // them into one integer
   clus = lo;
   clus |= hi << 16;
 }
 
+// Turns short name into lowercase format
+// Ex "FILE   PDF" -> "file.pdf"
 std::string Filesys::FileEntry::GetShortName()
 {
   std::string newName, postfix;
@@ -255,6 +298,7 @@ std::string Filesys::FileEntry::GetShortName()
   return newName;
 }
 
+// Returns true if entry is a directory
 bool Filesys::FileEntry::IsDir()
 {
   if ((attr & DIRECT) == DIRECT) 
@@ -263,20 +307,8 @@ bool Filesys::FileEntry::IsDir()
     return false;
 }
 
-bool Filesys::CallFunct(std::string& name, 
-                        std::vector<std::string>& argv)
-{
-  try
-  {
-    functions_.at(name)(*this, argv);
-  }
-  catch (std::exception &e)
-  {
-    return false;
-  }
-  return true;
-}
-
+// Breaks up address into list of locations
+// Ex /exdir/test/file -> list {exdir, test, file}
 std::list<std::string> Filesys::ParseAddress(std::string add)
 {
   std::list<std::string> list;
@@ -312,15 +344,20 @@ std::list<std::string> Filesys::ParseAddress(std::string add)
   return list;
 }
 
+// Takes list of locations from ParseAddress and returns the cluster
+// of the final location. Start and end specifices the range in the 
+// list to navigate. End is not inclusive, start is inclusive
 uint32_t Filesys::NavToDir(std::list<std::string>& list, size_t start, 
                            size_t end)
 {
   uint32_t currDirClus = cwd_;
   bool found;
 
+  // Nowhere to navigate
   if (start - end == 0)
     return currDirClus;
 
+  // Nowhere to navigate
   if (list.size() == 0)
     throw std::exception();
 
@@ -332,11 +369,13 @@ uint32_t Filesys::NavToDir(std::list<std::string>& list, size_t start,
 
     if (i == 0 && item == "/")
     {
+      // Start at root
       currDirClus = finfo_.RootClus;
     }
     else if (item != "." || currDirClus != finfo_.RootClus)
     {
-      // Will not enter here if . and in root dir
+      // Will not enter here if . and in root dir because there is no
+      // . in that directory
       std::list<FileEntry>* entries = GetFileList(currDirClus);
       found = false;
 
@@ -344,7 +383,8 @@ uint32_t Filesys::NavToDir(std::list<std::string>& list, size_t start,
       {
         if (e.GetShortName() == item && e.IsDir())
         {
-          if (e.clus == 0)
+          // .. in level below root has clus of 0
+          if (e.clus == 0 && item == "..")
             currDirClus = finfo_.RootClus;
           else
             currDirClus = e.clus;
@@ -366,6 +406,7 @@ uint32_t Filesys::NavToDir(std::list<std::string>& list, size_t start,
   return currDirClus;
 }
 
+// Gets the path name to a cluster
 std::string Filesys::GenPathName(uint32_t clus)
 {
   std::string name;
@@ -402,6 +443,63 @@ std::string Filesys::GenPathName(uint32_t clus)
   }
 
   return "/" + name;
+}
+
+// Creates and empty file
+void Filesys::CreateFile(char* name, uint8_t attr, uint32_t loc)
+{
+  uint32_t zero = 0;
+  WriteValue(name, 11, loc , 1);
+  WriteValue(&attr, 1, loc + 11, 1);
+  WriteValue(&zero, 1, loc + 20, 2);
+  WriteValue(&zero, 1, loc + 26, 2);
+  WriteValue(&zero, 1, loc + 28, 4);
+}
+
+void Filesys::CreateEntry(uint32_t location, std::string name,
+                          uint8_t attr)
+{
+  std::list<FileEntry>* list = GetFileList(location);
+
+  for (FileEntry e : *list)
+  {
+    if (e.GetShortName() == name)
+    {
+      std::cout << "File Already Exists" << std::endl;
+      delete list;
+      return;
+    }
+  }
+
+  delete list;
+  list = GetFileList(location, true);
+  uint32_t offset;
+
+  if (list->size() == 0)
+  {
+    // Allocate new cluster
+    std::cout << "Need to allcoate new cluster" << std::endl;
+  }
+  else
+  {
+    offset = list->front().entryLoc;
+  }
+
+  char value[11];
+  std::transform(name.begin(), name.end(), name.begin(), 
+                ::toupper);
+
+  for (size_t i = 0; i < 11; ++i)
+  {
+    if (i >= name.length())
+      value[i] = ' ';
+    else
+      value[i] = name[i];
+  }
+
+  CreateFile(value, attr, offset);
+
+  delete list;
 }
 
 void Filesys::Fsinfo(std::vector<std::string>& argv)
@@ -684,6 +782,8 @@ void Filesys::Read(std::vector<std::string>& argv)
       return;
     }
 
+    // May need to validate to ensure arguments are numbers
+
     uint32_t start = std::stoi(argv[1]);
     uint32_t length = std::stoi(argv[2]);
     char* readIn = new char[length];
@@ -724,6 +824,7 @@ void Filesys::Read(std::vector<std::string>& argv)
       curClus = GetNextClus(curClus);
       clusOffset = 0;
     }
+
     for (uint32_t i = 0; i < amountRead; ++i)
     {
       std::cout << readIn[i];
@@ -760,25 +861,8 @@ void Filesys::Mkdir(std::vector<std::string>& argv)
       return;
     }
 
-    // Other Validations
-
-    std::list<FileEntry>* list = GetFileList(location);
-
-    for (FileEntry e : *list)
-    {
-      if (e.GetShortName() == name)
-      {
-        std::cout << "Directory Already Exists" << std::endl;
-        delete list;
-        return;
-      }
-    }
-
-    delete list;
-
-    std::list<FileEntry>* dlist = GetFileList(location, true);
-
-    delete dlist;
+    // Other Validations needed
+    CreateEntry(location, name, DIRECT);
   }
 }
 

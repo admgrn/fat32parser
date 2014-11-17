@@ -108,6 +108,8 @@ class Filesys
     uint32_t NavToDir(std::list<std::string>&, size_t,
                       size_t);
     std::string GenPathName(uint32_t);
+    void CreateFile(char* , uint8_t, uint32_t);
+    void CreateEntry(uint32_t, std::string, uint8_t);
 
     void Fsinfo(std::vector<std::string>&);
     void Ls(std::vector<std::string>&);
