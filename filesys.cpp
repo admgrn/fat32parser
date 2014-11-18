@@ -234,6 +234,30 @@ uint32_t Filesys::GetNextClus(uint32_t cluster)
   return entry & FATMASK;
 }
 
+// Goes to FAT and sets cluster, fatLoc specfies the cluster
+void Filesys::SetNextClus(uint32_t fatLoc, uint32_t value)
+{
+  uint32_t entry;
+  ReadValue(&entry, 1, finfo_.GetThisFatSecN(fatLoc) * 
+                       finfo_.BytesPerSec + 
+                       finfo_.GetThisFatEntOff(fatLoc), 4);
+  entry = entry & (~FATMASK);
+  value = value & FATMASK;
+  entry = entry | value;
+  WriteValue(&value, 1, finfo_.GetThisFatSecN(fatLoc) * 
+                       finfo_.BytesPerSec + 
+                       finfo_.GetThisFatEntOff(fatLoc), 4);
+}
+
+// Indicates where to begin looking for empty clusters in the FAT
+uint32_t Filesys::GetFATNxtFree()
+{
+  uint32_t value;
+  ReadValue(&value, 1, finfo_.BytesPerSec * finfo_.FsInfo + 492, 4);
+
+  return value;
+}
+
 // Calculates number of free clusters from FsInfo section 
 uint32_t Filesys::GetNFreeClus()
 {
@@ -264,6 +288,17 @@ Filesys::FileEntry::FileEntry(char* n, uint8_t a, uint16_t l,
                               uint16_t h, uint32_t s, uint32_t el) :
                             name(n), attr(a), lo(l), hi(h), size(s),
                             clus(), entryLoc(el), openInfo(0)
+{
+  // Cluster number broken into two seperate integers, this combines
+  // them into one integer
+  clus = lo;
+  clus |= hi << 16;
+}
+
+Filesys::FileEntry::FileEntry(const FileEntry& a) :
+                            name(a.name), attr(a.attr), lo(a.lo), 
+                            hi(a.hi), size(a.size), clus(a.clus), 
+                            entryLoc(a.entryLoc), openInfo(a.openInfo)
 {
   // Cluster number broken into two seperate integers, this combines
   // them into one integer
@@ -305,6 +340,14 @@ bool Filesys::FileEntry::IsDir()
     return true;
   else
     return false;
+}
+
+// Sets the Cluster information for the file entry
+void Filesys::FileEntry::SetClus(uint32_t cluster)
+{
+  clus = cluster;
+  hi = (cluster & 0xFFFF0000) >> 4;
+  lo = cluster & 0x0000FFFF;
 }
 
 // Breaks up address into list of locations
@@ -387,7 +430,9 @@ uint32_t Filesys::NavToDir(std::list<std::string>& list, size_t start,
           if (e.clus == 0 && item == "..")
             currDirClus = finfo_.RootClus;
           else
+          {
             currDirClus = e.clus;
+          }
 
           found = true;
           break;
@@ -446,17 +491,70 @@ std::string Filesys::GenPathName(uint32_t clus)
 }
 
 // Creates and empty file
-void Filesys::CreateFile(char* name, uint8_t attr, uint32_t loc)
+void Filesys::CreateFile(FileEntry& entry)
 {
-  uint32_t zero = 0;
+  uint32_t loc = entry.entryLoc; 
+  uint32_t zero = 0; 
+  char name[11];
+
+  for (int i = 0; i < 11; ++i)
+    name[i] = entry.name[i];
+
   WriteValue(name, 11, loc , 1);
-  WriteValue(&attr, 1, loc + 11, 1);
-  WriteValue(&zero, 1, loc + 20, 2);
-  WriteValue(&zero, 1, loc + 26, 2);
+  WriteValue(&(entry.attr), 1, loc + 11, 1);
+  WriteValue(&(entry.hi), 1, loc + 20, 2);
+  WriteValue(&(entry.lo), 1, loc + 26, 2);
   WriteValue(&zero, 1, loc + 28, 4);
 }
 
-void Filesys::CreateEntry(uint32_t location, std::string name,
+uint32_t Filesys::AllocateCluster(uint32_t location)
+{
+  // Allocate new cluster
+  uint32_t position = GetFATNxtFree();
+  uint32_t entryValue;
+  bool found = false;
+  int startFromTop = 0;
+
+  if (position == 0xFFFFFFFF)
+  {
+    // Start at cluster 2 if no hint
+    position = 2;
+    startFromTop = 1;
+  }
+
+  do
+  {
+    do
+    {
+      entryValue = GetNextClus(position);
+      if (entryValue == 0)
+      {
+        found = true;
+        break;
+      }
+      ++position;
+    } while (position < finfo_.FATSz32);
+
+    ++startFromTop;
+
+    if (!found) 
+      position = 2;
+  }
+  while (!found && startFromTop < 2);
+
+  if (!found)
+  {
+    std::cout << "Filesystem out of space" << std::endl;
+    return 0;
+  }
+
+  if (location != 0)
+    SetNextClus(location, position);
+  SetNextClus(position, 0xFFFFFFFF);
+  return position;
+}
+
+Filesys::FileEntry* Filesys::AddEntry(uint32_t location, std::string name,
                           uint8_t attr)
 {
   std::list<FileEntry>* list = GetFileList(location);
@@ -467,23 +565,22 @@ void Filesys::CreateEntry(uint32_t location, std::string name,
     {
       std::cout << "File Already Exists" << std::endl;
       delete list;
-      return;
+      return NULL;
     }
   }
 
   delete list;
   list = GetFileList(location, true);
-  uint32_t offset;
 
   if (list->size() == 0)
   {
-    // Allocate new cluster
-    std::cout << "Need to allcoate new cluster" << std::endl;
+    delete list;
+    if (AllocateCluster(location) == 0)
+      return NULL;
+    list = GetFileList(location, true);
   }
-  else
-  {
-    offset = list->front().entryLoc;
-  }
+
+  FileEntry entry = list->front();
 
   char value[11];
   std::transform(name.begin(), name.end(), name.begin(), 
@@ -497,9 +594,12 @@ void Filesys::CreateEntry(uint32_t location, std::string name,
       value[i] = name[i];
   }
 
-  CreateFile(value, attr, offset);
+  entry.name = value;
+  entry.attr = attr;
+  entry.SetClus(0);
 
   delete list;
+  return new FileEntry(entry);
 }
 
 void Filesys::Fsinfo(std::vector<std::string>& argv)
@@ -552,6 +652,9 @@ void Filesys::Ls(std::vector<std::string>& argv)
     std::cout << "Error: Invalid Directory" << std::endl;
     return;
   }
+
+  if (currDirClus == 0)
+    return;
 
   std::list<FileEntry>* display = GetFileList(currDirClus);
 
@@ -862,7 +965,34 @@ void Filesys::Mkdir(std::vector<std::string>& argv)
     }
 
     // Other Validations needed
-    CreateEntry(location, name, DIRECT);
+    FileEntry* entry = AddEntry(location, name, DIRECT);
+
+    if (entry != NULL)
+    {
+      uint32_t newCluster = AllocateCluster();
+      if (newCluster != 0)
+      {
+        entry->SetClus(newCluster);
+        FileEntry* level = AddEntry(entry->clus,".          ", DIRECT);
+        FileEntry* topLevel = AddEntry(entry->clus,"..         ", DIRECT);
+
+        if (level != NULL)
+        {
+          level->SetClus(newCluster);
+          CreateFile(*level);
+          delete level;
+        }
+        if (topLevel != NULL)
+        {
+          topLevel->SetClus(location == finfo_.RootClus ? 0 : location);
+          topLevel->entryLoc += 32;
+          CreateFile(*topLevel);
+          delete topLevel;
+        }
+        CreateFile(*entry);
+      }
+      delete entry;
+    }
   }
 }
 

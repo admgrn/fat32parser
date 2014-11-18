@@ -86,7 +86,9 @@ class Filesys
 
         FileEntry(char*, uint8_t, uint16_t, uint16_t, uint32_t, uint32_t);
 
+        FileEntry(const FileEntry&);
         std::string GetShortName();
+        void SetClus(uint32_t);
         bool IsDir();
     };
 
@@ -95,21 +97,23 @@ class Filesys
     struct Fat32Info finfo_;
     std::list<FileEntry> openTable_;
 
-    
+    uint32_t GetFATNxtFree();
     uint32_t GetNFreeClus();
     template <typename T>
     void WriteValue(T*, size_t, size_t, size_t);
     template <typename T>
     void ReadValue(T*, size_t, size_t, size_t);
     uint32_t GetNextClus(uint32_t);
+    void SetNextClus(uint32_t, uint32_t);
+    uint32_t AllocateCluster(uint32_t = 0);
     std::list<FileEntry>* GetFileList(uint32_t, 
                                       bool = false);
     std::list<std::string> ParseAddress(std::string);
     uint32_t NavToDir(std::list<std::string>&, size_t,
                       size_t);
     std::string GenPathName(uint32_t);
-    void CreateFile(char* , uint8_t, uint32_t);
-    void CreateEntry(uint32_t, std::string, uint8_t);
+    void CreateFile(FileEntry&);
+    FileEntry* AddEntry(uint32_t, std::string, uint8_t);
 
     void Fsinfo(std::vector<std::string>&);
     void Ls(std::vector<std::string>&);
