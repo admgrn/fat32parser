@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstring>
 #include <cmath>
+#include <ctime>
 #include <algorithm>
 
 // Sets mask to take lower 28 bits
@@ -228,6 +229,8 @@ void Filesys::WriteValue(T* data, size_t len, size_t pos,
   }
 }
 
+// Writes or reads a file depending on the function passed to it
+// Assumes that memory has been allocated for it
 uint32_t Filesys::FileOperate(char* stream, uint32_t start, 
      uint32_t length, FileEntry& file, 
      std::function<void (Filesys&, char*, size_t, size_t, size_t)> funct)
@@ -301,6 +304,13 @@ void Filesys::SetNextClus(uint32_t fatLoc, uint32_t value)
   }
 }
 
+void Filesys::UpdateClusCount(std::function<uint32_t (uint32_t)> op)
+{
+  uint32_t clusCount = GetNFreeClus();
+  clusCount = op(clusCount);
+  SetNFreeClus(clusCount);
+}
+
 // Indicates where to begin looking for empty clusters in the FAT
 uint32_t Filesys::GetFATNxtFree()
 {
@@ -324,6 +334,12 @@ uint32_t Filesys::GetNFreeClus()
   return value;
 }
 
+// Sets number of free clusters from FsInfo section 
+void Filesys::SetNFreeClus(uint32_t value)
+{
+  WriteValue(&value, 1, finfo_.FsInfo * finfo_.BytesPerSec + 488, 4);
+}
+
 // Calculation found on page 14 of specification
 uint32_t Filesys::Fat32Info::GetFirstSectorOfClus(uint32_t n)
 {
@@ -344,8 +360,9 @@ uint32_t Filesys::Fat32Info::GetThisFatEntOff(uint32_t n)
 
 Filesys::FileEntry::FileEntry(char* n, uint8_t a, uint16_t l, 
                               uint16_t h, uint32_t s, uint32_t el) :
-                            name(n), attr(a), lo(l), hi(h), size(s),
-                            clus(), entryLoc(el), openInfo(0)
+                            name(n), attr(a), lo(l), hi(h), wrtTime(), 
+                            wrtDate(), size(s), clus(), entryLoc(el), 
+                            openInfo(0)
 {
   // Cluster number broken into two seperate integers, this combines
   // them into one integer
@@ -398,6 +415,25 @@ bool Filesys::FileEntry::IsDir()
     return true;
   else
     return false;
+}
+
+// Sets the time field
+void Filesys::FileEntry::SetCurrentTime()
+{
+  time_t timer;
+  struct tm* localTime;
+
+  time(&timer);
+  localTime = localtime(&timer);
+  
+  wrtDate = localTime->tm_mday;
+  wrtDate |= ((localTime->tm_mon + 1) << 5);
+  wrtDate |= ((localTime->tm_year - 80) << 9);
+
+  uint8_t tValue = localTime->tm_sec / 2;
+  wrtTime = tValue > 29 ? 29 : tValue;
+  wrtTime |= (localTime->tm_min << 5);
+  wrtTime |= (localTime->tm_hour << 11);
 }
 
 // Sets the Cluster information for the file entry
@@ -552,18 +588,30 @@ std::string Filesys::GenPathName(uint32_t clus)
 void Filesys::CreateFile(FileEntry& entry)
 {
   uint32_t loc = entry.entryLoc; 
+  uint32_t zero = 0;
   char name[11];
 
   for (int i = 0; i < 11; ++i)
     name[i] = entry.name[i];
 
+  entry.SetCurrentTime();
+
   WriteValue(name, 11, loc , 1);
   WriteValue(&(entry.attr), 1, loc + 11, 1);
+  WriteValue(&zero, 1, loc + 13, 1);
+  WriteValue(&zero, 1, loc + 14, 2);
+  WriteValue(&zero, 1, loc + 16, 2);
+  WriteValue(&zero, 1, loc + 18, 2);
   WriteValue(&(entry.hi), 1, loc + 20, 2);
+  WriteValue(&(entry.wrtTime), 1, loc + 22, 2);
+  WriteValue(&(entry.wrtDate), 1, loc + 24, 2);
   WriteValue(&(entry.lo), 1, loc + 26, 2);
   WriteValue(&(entry.size), 1, loc + 28, 4);
 }
 
+// Allocates a cluster and returns the new cluster number
+// location is optional, if tihs cluster value is passed in
+// then the new cluster is appened to chain at location
 uint32_t Filesys::AllocateCluster(uint32_t location)
 {
   // Allocate new cluster
@@ -571,6 +619,8 @@ uint32_t Filesys::AllocateCluster(uint32_t location)
   uint32_t entryValue;
   bool found = false;
   int startFromTop = 0;
+  uint32_t endOfFat = (finfo_.FATSz32 * finfo_.BytesPerSec) / 4;
+  std::cout << position << std::endl;
 
   if (position == 0xFFFFFFFF)
   {
@@ -590,7 +640,7 @@ uint32_t Filesys::AllocateCluster(uint32_t location)
         break;
       }
       ++position;
-    } while (position < finfo_.FATSz32);
+    } while (position < endOfFat);
 
     ++startFromTop;
 
@@ -607,10 +657,21 @@ uint32_t Filesys::AllocateCluster(uint32_t location)
 
   // This appends the new cluster to the end of a chain if location is set
   if (location != 0)
+  {
+    uint32_t templocat = location;
+    while (1) 
+    {
+      if ((templocat = GetNextClus(templocat)) >= FATEND)
+        break;
+
+      location = templocat;
+    }
     SetNextClus(location, position);
+  }
 
   SetNextClus(position, 0xFFFFFFFF);
   SetFATNxtFree(position);
+  UpdateClusCount([] (uint32_t value) { return value - 1;});
 
   return position;
 }
@@ -1084,6 +1145,7 @@ void Filesys::Mkdir(std::vector<std::string>& argv)
     catch (std::exception &e)
     {
       std::cout << "Invalid location" << std::endl;
+      return;
     }
 
     std::string name = address.back();

@@ -79,6 +79,8 @@ class Filesys
         uint8_t attr;
         uint16_t lo;
         uint16_t hi;
+        uint16_t wrtTime;
+        uint16_t wrtDate;
         uint32_t size;
         uint32_t clus;
         uint32_t entryLoc;
@@ -90,6 +92,7 @@ class Filesys
         std::string GetShortName();
         void SetClus(uint32_t);
         bool IsDir();
+        void SetCurrentTime();
     };
 
     uint32_t cwd_;
@@ -97,9 +100,12 @@ class Filesys
     struct Fat32Info finfo_;
     std::list<FileEntry> openTable_;
 
+    void UpdateClusCount(std::function 
+                      <uint32_t (uint32_t)> op);
     uint32_t GetFATNxtFree();
     void SetFATNxtFree(uint32_t);
     uint32_t GetNFreeClus();
+    void SetNFreeClus(uint32_t);
     template <typename T>
     void WriteValue(T*, size_t, size_t, size_t);
     template <typename T>
