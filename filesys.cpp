@@ -620,7 +620,6 @@ uint32_t Filesys::AllocateCluster(uint32_t location)
   bool found = false;
   int startFromTop = 0;
   uint32_t endOfFat = (finfo_.FATSz32 * finfo_.BytesPerSec) / 4;
-  std::cout << position << std::endl;
 
   if (position == 0xFFFFFFFF)
   {
