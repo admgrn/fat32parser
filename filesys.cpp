@@ -57,6 +57,7 @@ Filesys::Filesys(std::string fname) : mFilesys_(0),
   functions_.insert(std::make_pair("close", &Filesys::Close));
   functions_.insert(std::make_pair("read", &Filesys::Read));
   functions_.insert(std::make_pair("mkdir", &Filesys::Mkdir));
+  functions_.insert(std::make_pair("create", &Filesys::Create));
   functions_.insert(std::make_pair("help", &Filesys::Help));
 }
 
@@ -258,6 +259,12 @@ uint32_t Filesys::GetFATNxtFree()
   return value;
 }
 
+// Sets where to begin looking for empty clusters in the FAT
+void Filesys::SetFATNxtFree(uint32_t cluster)
+{
+  WriteValue(&cluster, 1, finfo_.BytesPerSec * finfo_.FsInfo + 492, 4);
+}
+
 // Calculates number of free clusters from FsInfo section 
 uint32_t Filesys::GetNFreeClus()
 {
@@ -455,7 +462,7 @@ uint32_t Filesys::NavToDir(std::list<std::string>& list, size_t start,
 std::string Filesys::GenPathName(uint32_t clus)
 {
   std::string name;
-  uint32_t curClus;
+  uint32_t curClus = cwd_;
   uint32_t prevClus = clus;
   uint32_t foundClus = clus;
   std::list<FileEntry>* list;
@@ -548,14 +555,18 @@ uint32_t Filesys::AllocateCluster(uint32_t location)
     return 0;
   }
 
+  // This appends the new cluster to the end of a chain if location is set
   if (location != 0)
     SetNextClus(location, position);
+
   SetNextClus(position, 0xFFFFFFFF);
+  SetFATNxtFree(position);
+
   return position;
 }
 
 Filesys::FileEntry* Filesys::AddEntry(uint32_t location, std::string name,
-                          uint8_t attr)
+                                      uint8_t attr)
 {
   std::list<FileEntry>* list = GetFileList(location);
 
@@ -991,6 +1002,86 @@ void Filesys::Mkdir(std::vector<std::string>& argv)
         }
         CreateFile(*entry);
       }
+      delete entry;
+    }
+  }
+}
+
+void Filesys::Create(std::vector<std::string>& argv)
+{
+  if (argv.size() != 1)
+  {
+    std::cout << "Usage: create <file_name>" << std::endl;
+    return;
+  }
+  else
+  {
+    std::list<std::string> address = ParseAddress(argv[0]);
+    uint32_t location = cwd_;
+
+    try
+    {
+      location = NavToDir(address, 0, address.size() - 1);
+    }
+    catch (std::exception &e)
+    {
+      std::cout << "Invalid location" << std::endl;
+    }
+
+    std::string name = address.back();
+    
+    size_t dotPos = name.find_first_of(".", 0);
+    char fixedName[11];
+    std::string originalName = name;
+
+    if (dotPos == 0)
+    {
+      std::cout << "Invalid Filename" << std::endl;
+      return;
+    }
+
+    if (dotPos != std::string::npos)
+    {
+      if (name.length() - (dotPos + 1) != 3)
+      {
+        std::cout << "Invalid Filename" << std::endl;
+        return;
+      }
+
+      std::string postfix = name.substr(dotPos + 1, name.length());
+      name = name.substr(0, dotPos);
+
+      for (size_t i = 0; i < 8; ++i)
+      {
+        if (i >= name.length()) 
+          fixedName[i] = ' ';
+        else
+          fixedName[i] = name[i];
+      }
+      for (size_t i = 8; i < 11; ++i)
+      {
+        fixedName[i] = postfix[i - 8];
+      }
+    }
+    else
+    {
+      for (size_t i = 0; i < 11; ++i)
+      {
+        if (i >= name.length())
+          fixedName[i] = ' ';
+        else
+          fixedName[i] = name[i];
+      }
+    }
+
+    // Other Validations needed
+    FileEntry* entry = AddEntry(location, originalName, 0);
+
+    if (entry != NULL)
+    {
+      entry->SetClus(0);
+      entry->name = fixedName;
+      CreateFile(*entry);
       delete entry;
     }
   }

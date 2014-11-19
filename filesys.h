@@ -98,6 +98,7 @@ class Filesys
     std::list<FileEntry> openTable_;
 
     uint32_t GetFATNxtFree();
+    void SetFATNxtFree(uint32_t);
     uint32_t GetNFreeClus();
     template <typename T>
     void WriteValue(T*, size_t, size_t, size_t);
@@ -118,6 +119,7 @@ class Filesys
     void Fsinfo(std::vector<std::string>&);
     void Ls(std::vector<std::string>&);
     void Mkdir(std::vector<std::string>&);
+    void Create(std::vector<std::string>&);
     void Cd(std::vector<std::string>&);
     void Size(std::vector<std::string>&);
     void Open(std::vector<std::string>&);
