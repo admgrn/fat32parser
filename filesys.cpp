@@ -294,7 +294,7 @@ void Filesys::SetNextClus(uint32_t fatLoc, uint32_t value)
     entry = entry & (~FATMASK);
     value = value & FATMASK;
     entry = entry | value;
-    WriteValue(&value, 1, (finfo_.GetThisFatSecN(fatLoc) * 
+    WriteValue(&value, 1, (finfo_.GetThisFatSecN(fatLoc) + 
                               (i * finfo_.FATSz)) *
                          finfo_.BytesPerSec + 
                          finfo_.GetThisFatEntOff(fatLoc), 4);
