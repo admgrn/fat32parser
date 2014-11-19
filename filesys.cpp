@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <initializer_list>
 #include <cctype>
+#include <cstring>
+#include <cmath>
 #include <algorithm>
 
 // Sets mask to take lower 28 bits
@@ -56,6 +58,7 @@ Filesys::Filesys(std::string fname) : mFilesys_(0),
   functions_.insert(std::make_pair("open", &Filesys::Open));
   functions_.insert(std::make_pair("close", &Filesys::Close));
   functions_.insert(std::make_pair("read", &Filesys::Read));
+  functions_.insert(std::make_pair("write", &Filesys::Write));
   functions_.insert(std::make_pair("mkdir", &Filesys::Mkdir));
   functions_.insert(std::make_pair("create", &Filesys::Create));
   functions_.insert(std::make_pair("help", &Filesys::Help));
@@ -225,6 +228,49 @@ void Filesys::WriteValue(T* data, size_t len, size_t pos,
   }
 }
 
+uint32_t Filesys::FileOperate(char* stream, uint32_t start, 
+     uint32_t length, FileEntry& file, 
+     std::function<void (Filesys&, char*, size_t, size_t, size_t)> funct)
+{
+  uint32_t clusSize = finfo_.BytesPerSec * finfo_.SecPerClus; 
+
+  uint32_t clusNum = start / clusSize;
+  uint32_t clusOffset = start % clusSize;
+  uint32_t curClus = file.clus;
+
+  for (uint32_t i = 0; i < clusNum; ++i)
+  {
+    curClus = GetNextClus(curClus);
+    if (curClus >= FATEND)
+    {
+      std::cout << "Error: Start Parameter out of bounds"
+                << std::endl;
+      return 0;
+    }
+  }
+
+  uint32_t amountTran = 0;
+  uint32_t loc, remaining, tran;
+
+  while (amountTran < length && curClus < FATEND)
+  {
+    remaining = finfo_.BytesPerSec * finfo_.SecPerClus - 
+                clusOffset;
+    tran = length - amountTran;
+    loc = finfo_.BytesPerSec * 
+          finfo_.GetFirstSectorOfClus(curClus);
+
+    if (tran > remaining)
+      tran = remaining;
+
+    funct(*this, stream + amountTran, tran, loc + clusOffset, 1);
+    amountTran += tran; 
+    curClus = GetNextClus(curClus);
+    clusOffset = 0;
+  }
+  return amountTran;
+}
+
 // Goes to FAT and returns next cluster in the file
 uint32_t Filesys::GetNextClus(uint32_t cluster)
 {
@@ -239,15 +285,20 @@ uint32_t Filesys::GetNextClus(uint32_t cluster)
 void Filesys::SetNextClus(uint32_t fatLoc, uint32_t value)
 {
   uint32_t entry;
-  ReadValue(&entry, 1, finfo_.GetThisFatSecN(fatLoc) * 
-                       finfo_.BytesPerSec + 
-                       finfo_.GetThisFatEntOff(fatLoc), 4);
-  entry = entry & (~FATMASK);
-  value = value & FATMASK;
-  entry = entry | value;
-  WriteValue(&value, 1, finfo_.GetThisFatSecN(fatLoc) * 
-                       finfo_.BytesPerSec + 
-                       finfo_.GetThisFatEntOff(fatLoc), 4);
+  for (uint8_t i = 0; i < finfo_.NumFats; ++i)
+  {
+    ReadValue(&entry, 1, (finfo_.GetThisFatSecN(fatLoc) + 
+                            (i * finfo_.FATSz)) * 
+                         finfo_.BytesPerSec + 
+                         finfo_.GetThisFatEntOff(fatLoc), 4);
+    entry = entry & (~FATMASK);
+    value = value & FATMASK;
+    entry = entry | value;
+    WriteValue(&value, 1, (finfo_.GetThisFatSecN(fatLoc) * 
+                              (i * finfo_.FATSz)) *
+                         finfo_.BytesPerSec + 
+                         finfo_.GetThisFatEntOff(fatLoc), 4);
+  }
 }
 
 // Indicates where to begin looking for empty clusters in the FAT
@@ -501,7 +552,6 @@ std::string Filesys::GenPathName(uint32_t clus)
 void Filesys::CreateFile(FileEntry& entry)
 {
   uint32_t loc = entry.entryLoc; 
-  uint32_t zero = 0; 
   char name[11];
 
   for (int i = 0; i < 11; ++i)
@@ -511,7 +561,7 @@ void Filesys::CreateFile(FileEntry& entry)
   WriteValue(&(entry.attr), 1, loc + 11, 1);
   WriteValue(&(entry.hi), 1, loc + 20, 2);
   WriteValue(&(entry.lo), 1, loc + 26, 2);
-  WriteValue(&zero, 1, loc + 28, 4);
+  WriteValue(&(entry.size), 1, loc + 28, 4);
 }
 
 uint32_t Filesys::AllocateCluster(uint32_t location)
@@ -608,6 +658,7 @@ Filesys::FileEntry* Filesys::AddEntry(uint32_t location, std::string name,
   entry.name = value;
   entry.attr = attr;
   entry.SetClus(0);
+  entry.size = 0;
 
   delete list;
   return new FileEntry(entry);
@@ -901,48 +952,116 @@ void Filesys::Read(std::vector<std::string>& argv)
     uint32_t start = std::stoi(argv[1]);
     uint32_t length = std::stoi(argv[2]);
     char* readIn = new char[length];
-    uint32_t clusSize = finfo_.BytesPerSec * finfo_.SecPerClus; 
-
-    uint32_t clusNum = start / clusSize;
-    uint32_t clusOffset = start % clusSize;
-    uint32_t curClus = (*iter).clus;
-
-    for (uint32_t i = 0; i < clusNum; ++i)
-    {
-      curClus = GetNextClus(curClus);
-      if (curClus >= FATEND)
-      {
-        delete readIn;
-        std::cout << "Error: Start Parameter out of bounds"
-                  << std::endl;
-        return;
-      }
-    }
-
-    uint32_t amountRead = 0;
-    uint32_t loc, remaining, read;
-
-    while (amountRead < length && curClus < FATEND)
-    {
-      remaining = finfo_.BytesPerSec * finfo_.SecPerClus - 
-                  clusOffset;
-      read = length - amountRead;
-      loc = finfo_.BytesPerSec * 
-            finfo_.GetFirstSectorOfClus(curClus);
-
-      if (read > remaining)
-        read = remaining;
-
-      ReadValue(readIn + amountRead, read, loc + clusOffset, 1);
-      amountRead += read; 
-      curClus = GetNextClus(curClus);
-      clusOffset = 0;
-    }
-
+    uint32_t amountRead = FileOperate(readIn, start, length, *iter, 
+              &Filesys::ReadValue<char>);
     for (uint32_t i = 0; i < amountRead; ++i)
     {
       std::cout << readIn[i];
     }
+
+    delete readIn;
+  }
+}
+
+void Filesys::Write(std::vector<std::string>& argv)
+{
+  if (argv.size() != 3)
+  {
+    std::cout << "Usage: Write <file_name> <start> <quoted_data>"
+              << std::endl;
+    return;
+  }
+  else
+  {
+    std::list<FileEntry>::iterator iter = openTable_.begin(); 
+    std::string name = argv[0];
+    bool found = false;
+
+    while (iter != openTable_.end())
+    {
+      if ((*iter).GetShortName() == name)
+      {
+        if (((*iter).openInfo & WRITE) != WRITE)
+        {
+          std::cout << "Error: File not open for writing" 
+                    << std::endl;
+          return;
+        }
+
+        found = true;
+        break;
+      }
+      ++iter;
+    }
+
+    if (!found)
+    {
+      std::cout << "Error: File not open" << std::endl;
+      return;
+    }
+
+    // May need to validate to ensure arguments are numbers
+
+    uint32_t start = std::stoi(argv[1]);
+    std::string input = argv[2];
+    uint32_t length = input.length();
+
+    uint32_t totalSize = start + length;
+    uint32_t currAllocated;
+    uint32_t location;
+
+    if ((*iter).clus == 0)
+    {
+      location = AllocateCluster();
+      (*iter).SetClus(location);
+      (*iter).size = totalSize;
+      CreateFile(*iter);
+      currAllocated = 1;
+    }
+    else
+    {
+      currAllocated = 0;
+      location = (*iter).clus;
+      uint32_t templocat = location;
+      while (1) 
+      {
+        ++currAllocated;
+        if ((templocat = GetNextClus(templocat)) >= FATEND)
+          break;
+
+        location = templocat;
+      }
+    }
+    currAllocated *= finfo_.SecPerClus * finfo_.BytesPerSec;
+
+
+    if (totalSize > currAllocated)
+    {
+      uint32_t neededClus = 
+                  (uint32_t)ceil((float)(totalSize - currAllocated) /
+                  (finfo_.SecPerClus * finfo_.BytesPerSec));
+
+      for (uint32_t i = 0; i < neededClus; ++i)
+      {
+        location = AllocateCluster(location);
+      }
+    }
+
+    if ((*iter).size < totalSize)
+    {
+      (*iter).size = totalSize;
+      CreateFile(*iter);
+    }
+
+    char* writeIn = new char[length];
+    strcpy(writeIn, input.c_str());
+    if (FileOperate(writeIn, start, length, *iter, 
+              &Filesys::WriteValue<char>) == 0)
+    {
+      std::cout << "An error occured" << std::endl;
+    }
+
+    delete writeIn;
   }
 }
 

@@ -115,6 +115,9 @@ class Filesys
     std::string GenPathName(uint32_t);
     void CreateFile(FileEntry&);
     FileEntry* AddEntry(uint32_t, std::string, uint8_t);
+    uint32_t FileOperate(char*, uint32_t, uint32_t, FileEntry&, 
+         std::function<void (Filesys&, char*, size_t, 
+         size_t, size_t)> funct);
 
     void Fsinfo(std::vector<std::string>&);
     void Ls(std::vector<std::string>&);
@@ -125,6 +128,7 @@ class Filesys
     void Open(std::vector<std::string>&);
     void Close(std::vector<std::string>&);
     void Read(std::vector<std::string>&);
+    void Write(std::vector<std::string>&);
     void Help(std::vector<std::string>&);
 };
 #endif
