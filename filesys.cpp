@@ -1019,7 +1019,7 @@ void Filesys::Read(std::vector<std::string>& argv)
       std::cout << readIn[i];
     }
 
-    delete readIn;
+    delete[] readIn;
   }
 }
 
@@ -1121,7 +1121,7 @@ void Filesys::Write(std::vector<std::string>& argv)
       std::cout << "An error occured" << std::endl;
     }
 
-    delete writeIn;
+    delete[] writeIn;
   }
 }
 
