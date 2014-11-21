@@ -61,6 +61,8 @@ Filesys::Filesys(std::string fname) : mFilesys_(0),
   functions_.insert(std::make_pair("read", &Filesys::Read));
   functions_.insert(std::make_pair("write", &Filesys::Write));
   functions_.insert(std::make_pair("mkdir", &Filesys::Mkdir));
+  functions_.insert(std::make_pair("rm", &Filesys::Rm));
+  functions_.insert(std::make_pair("rmdir", &Filesys::Rmdir));
   functions_.insert(std::make_pair("create", &Filesys::Create));
   functions_.insert(std::make_pair("help", &Filesys::Help));
 }
@@ -652,7 +654,7 @@ uint32_t Filesys::AllocateCluster(uint32_t location)
   {
     std::cout << "Filesystem out of space" << std::endl;
     return 0;
-  }
+  } 
 
   // This appends the new cluster to the end of a chain if location is set
   if (location != 0)
@@ -671,8 +673,35 @@ uint32_t Filesys::AllocateCluster(uint32_t location)
   SetNextClus(position, 0xFFFFFFFF);
   SetFATNxtFree(position);
   UpdateClusCount([] (uint32_t value) { return value - 1;});
+  ZeroOutCluster(position);
 
   return position;
+}
+
+void Filesys::DeallocateChain(uint32_t cluster)
+{
+  if (cluster >= FATEND)
+  {
+    return;
+  }
+  else
+  {
+    uint32_t nxtClus = GetNextClus(cluster);
+    DeallocateChain(nxtClus);
+    SetNextClus(cluster, 0);
+    UpdateClusCount([] (uint32_t value) { return value + 1;});
+  }
+}
+
+void Filesys::ZeroOutCluster(uint32_t cluster)
+{
+  uint32_t start = finfo_.BytesPerSec * 
+                   finfo_.GetFirstSectorOfClus(cluster);
+  uint32_t len = finfo_.BytesPerSec * finfo_.SecPerClus;
+  uint8_t zero = 0;
+
+  for (uint32_t i = 0; i < len; ++i)
+    WriteValue(&zero, 1, start + i, 1); 
 }
 
 Filesys::FileEntry* Filesys::AddEntry(uint32_t location, std::string name,
@@ -929,6 +958,7 @@ void Filesys::Open(std::vector<std::string>& argv)
         if ((e.attr & DIRECT) ==  DIRECT)
         {
           std::cout << "Error: Cannot Open Directory" << std::endl;
+          delete list;
           return;
         }
         e.openInfo = openPermission;
@@ -1264,6 +1294,128 @@ void Filesys::Create(std::vector<std::string>& argv)
       CreateFile(*entry);
       delete entry;
     }
+  }
+}
+
+void Filesys::Rm(std::vector<std::string>& argv)
+{
+  if (argv.size() != 1)
+  {
+    std::cout << "usage: rm <file_name>" << std::endl;
+    return;
+  }
+  else
+  {
+    std::string name = argv[0];
+    uint32_t location = cwd_;
+    std::list<FileEntry>* list = GetFileList(location);
+    FileEntry* entry = NULL;
+
+    bool found = false;
+    bool dirFound = false;
+    for (FileEntry e : *list)
+    {
+      if (e.GetShortName() == name)
+      {
+        if ((e.attr & DIRECT) != DIRECT)
+        {
+          found = true;
+          entry = new FileEntry(e);
+        }
+        else
+        {
+          dirFound = true;
+        }
+        break;
+      }
+    }
+
+    delete list;
+
+    if (!found)
+    {
+      if (!dirFound)
+        std::cout << "Invalid Filename" << std::endl;
+      else
+        std::cout << "Error: File specified is directory" << std::endl;
+      return;
+    }
+
+    for (FileEntry e : openTable_)
+    {
+      if (e.GetShortName() == name)
+      {
+        std::cout << "Cannot remove file, in use" << std::endl;
+        delete entry;
+        return;
+      }
+    }
+
+    entry->name[0] = 0xe5;
+    CreateFile(*entry);
+
+    if (entry->clus != 0)
+      DeallocateChain(entry->clus);
+
+    delete entry;
+  }
+}
+
+void Filesys::Rmdir(std::vector<std::string>& argv)
+{
+  if (argv.size() != 1)
+  {
+    std::cout << "usage: rmdir <dir_name>" << std::endl;
+    return;
+  }
+  else
+  {
+    std::string name = argv[0];
+    uint32_t location = cwd_;
+    std::list<FileEntry>* list = GetFileList(location);
+    FileEntry* entry = NULL;
+
+    bool found = false;
+    if (name[0] != '.')
+    {
+      for (FileEntry e : *list)
+      {
+        if (e.GetShortName() == name)
+        {
+          if ((e.attr & DIRECT) == DIRECT)
+          {
+            found = true;
+            entry = new FileEntry(e);
+          }
+          break;
+        }
+      }
+    }
+
+    delete list;
+
+    if (!found)
+    {
+      std::cout << "Invalid Filename" << std::endl;
+      return;
+    }
+
+    list = GetFileList(entry->clus);
+    
+    if (list->size() > 2)
+    {
+      std::cout << "Directory must be empty" << std::endl;
+      delete entry;
+      return;
+    }
+
+    entry->name[0] = 0xe5;
+    CreateFile(*entry);
+
+    if (entry->clus != 0)
+      DeallocateChain(entry->clus);
+
+    delete entry;
   }
 }
 
