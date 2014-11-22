@@ -98,7 +98,27 @@ void Filesys::Validate()
   ReadValue(&(finfo_.RootClus), 1, 44, 4);
   ReadValue(&(finfo_.FsInfo), 1, 48, 2);
   ReadValue(&(finfo_.TotSec), 1, 32, 4);
-  ReadValue(&(finfo_.SecPerFat), 1, 32, 4);
+
+  if (finfo_.BytesPerSec != 512 &&
+      finfo_.BytesPerSec != 1024 &&
+      finfo_.BytesPerSec != 2048 &&
+      finfo_.BytesPerSec != 4096)
+    throw std::exception();
+
+  if (finfo_.RootEntCnt != 0)
+    throw std::exception();
+
+  if (finfo_.SecPerClus != 1 &&
+      finfo_.SecPerClus != 2 &&
+      finfo_.SecPerClus != 4 &&
+      finfo_.SecPerClus != 16 &&
+      finfo_.SecPerClus != 32 &&
+      finfo_.SecPerClus != 64 &&
+      finfo_.SecPerClus != 128)
+    throw std::exception();
+
+  if (finfo_.TotSec == 0)
+    throw std::exception();
 
   finfo_.RootDirSector = ((finfo_.RootEntCnt * 32) + 
                            (finfo_.BytesPerSec - 1)) /
@@ -1442,6 +1462,7 @@ void Filesys::Rmdir(std::vector<std::string>& argv)
     if (list->size() > 2)
     {
       std::cout << "Directory must be empty" << std::endl;
+      delete list;
       delete entry;
       return;
     }
@@ -1453,6 +1474,7 @@ void Filesys::Rmdir(std::vector<std::string>& argv)
       DeallocateChain(entry->clus);
 
     delete entry;
+    delete list;
   }
 }
 
@@ -1517,6 +1539,7 @@ void Filesys::Undelete(std::vector<std::string>&)
           if (i == clusterCount - 1)
           {
             SetNextClus(currentCluster, 0xFFFFFFFF);
+            UpdateClusCount([] (uint32_t value) {return value - 1;});
           }
           else
           {
@@ -1532,8 +1555,8 @@ void Filesys::Undelete(std::vector<std::string>&)
 
             if (boundError)
               break;
-            std::cout << currentCluster << std::endl;
             SetNextClus(currentCluster, nextCluster);
+            UpdateClusCount([] (uint32_t value) {return value - 1;});
             currentCluster = nextCluster;
           }
         }

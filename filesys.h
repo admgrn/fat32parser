@@ -65,7 +65,6 @@ class Filesys
         uint32_t RootClus;
         uint32_t FsInfo;
         uint32_t TotSec;
-        uint32_t SecPerFat;
 
         uint32_t GetFirstSectorOfClus(uint32_t);
         uint32_t GetThisFatSecN(uint32_t);
