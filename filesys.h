@@ -70,6 +70,7 @@ class Filesys
         uint32_t GetFirstSectorOfClus(uint32_t);
         uint32_t GetThisFatSecN(uint32_t);
         uint32_t GetThisFatEntOff(uint32_t);
+        uint32_t GetEndOfFat();
     };
 
     class FileEntry
@@ -115,13 +116,14 @@ class Filesys
     uint32_t AllocateCluster(uint32_t = 0);
     void DeallocateChain(uint32_t);
     void ZeroOutCluster(uint32_t);
+    std::string ValidateFileName(std::string);
     std::list<FileEntry>* GetFileList(uint32_t, 
                                       bool = false);
     std::list<std::string> ParseAddress(std::string);
     uint32_t NavToDir(std::list<std::string>&, size_t,
                       size_t);
     std::string GenPathName(uint32_t);
-    void CreateFile(FileEntry&);
+    void SaveFileEntry(FileEntry&);
     FileEntry* AddEntry(uint32_t, std::string, uint8_t);
     uint32_t FileOperate(char*, uint32_t, uint32_t, FileEntry&, 
          std::function<void (Filesys&, char*, size_t, 
@@ -139,6 +141,7 @@ class Filesys
     void Write(std::vector<std::string>&);
     void Rm(std::vector<std::string>&);
     void Rmdir(std::vector<std::string>&);
+    void Undelete(std::vector<std::string>&);
     void Help(std::vector<std::string>&);
 };
 #endif

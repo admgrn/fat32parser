@@ -10,6 +10,7 @@
 #include <cmath>
 #include <ctime>
 #include <algorithm>
+#include <sstream>
 
 // Sets mask to take lower 28 bits
 #define FATMASK 0x0FFFFFFF
@@ -64,6 +65,7 @@ Filesys::Filesys(std::string fname) : mFilesys_(0),
   functions_.insert(std::make_pair("rm", &Filesys::Rm));
   functions_.insert(std::make_pair("rmdir", &Filesys::Rmdir));
   functions_.insert(std::make_pair("create", &Filesys::Create));
+  functions_.insert(std::make_pair("undelete", &Filesys::Undelete));
   functions_.insert(std::make_pair("help", &Filesys::Help));
 }
 
@@ -360,6 +362,12 @@ uint32_t Filesys::Fat32Info::GetThisFatEntOff(uint32_t n)
   return (n * 4) % BytesPerSec;
 }
 
+// Gets the end of fat
+uint32_t Filesys::Fat32Info::GetEndOfFat()
+{
+  return (TotSec - FirstDataSec) / SecPerClus + 1;
+}
+
 Filesys::FileEntry::FileEntry(char* n, uint8_t a, uint16_t l, 
                               uint16_t h, uint32_t s, uint32_t el) :
                             name(n), attr(a), lo(l), hi(h), wrtTime(), 
@@ -586,8 +594,8 @@ std::string Filesys::GenPathName(uint32_t clus)
   return "/" + name;
 }
 
-// Creates and empty file
-void Filesys::CreateFile(FileEntry& entry)
+// Saves FileEntry
+void Filesys::SaveFileEntry(FileEntry& entry)
 {
   uint32_t loc = entry.entryLoc; 
   uint32_t zero = 0;
@@ -621,7 +629,7 @@ uint32_t Filesys::AllocateCluster(uint32_t location)
   uint32_t entryValue;
   bool found = false;
   int startFromTop = 0;
-  uint32_t endOfFat = (finfo_.FATSz32 * finfo_.BytesPerSec) / 4;
+  uint32_t endOfFat = finfo_.GetEndOfFat();
 
   if (position == 0xFFFFFFFF)
   {
@@ -678,6 +686,7 @@ uint32_t Filesys::AllocateCluster(uint32_t location)
   return position;
 }
 
+// Deallocates the cluster chain in the FAT
 void Filesys::DeallocateChain(uint32_t cluster)
 {
   if (cluster >= FATEND)
@@ -693,6 +702,7 @@ void Filesys::DeallocateChain(uint32_t cluster)
   }
 }
 
+// Zeroes out the speciied cluster
 void Filesys::ZeroOutCluster(uint32_t cluster)
 {
   uint32_t start = finfo_.BytesPerSec * 
@@ -704,6 +714,7 @@ void Filesys::ZeroOutCluster(uint32_t cluster)
     WriteValue(&zero, 1, start + i, 1); 
 }
 
+// Allocates space for a FileEntry, does not actually save it
 Filesys::FileEntry* Filesys::AddEntry(uint32_t location, std::string name,
                                       uint8_t attr)
 {
@@ -1105,7 +1116,7 @@ void Filesys::Write(std::vector<std::string>& argv)
       location = AllocateCluster();
       (*iter).SetClus(location);
       (*iter).size = totalSize;
-      CreateFile(*iter);
+      SaveFileEntry(*iter);
       currAllocated = 1;
     }
     else
@@ -1140,7 +1151,7 @@ void Filesys::Write(std::vector<std::string>& argv)
     if ((*iter).size < totalSize)
     {
       (*iter).size = totalSize;
-      CreateFile(*iter);
+      SaveFileEntry(*iter);
     }
 
     char* writeIn = new char[length];
@@ -1178,10 +1189,14 @@ void Filesys::Mkdir(std::vector<std::string>& argv)
     }
 
     std::string name = address.back();
-    
-    if (name.length() > 7)
+
+    std::string fixedName; 
+    try
     {
-      std::cout << "Filename too long" << std::endl;
+      fixedName = ValidateFileName(name);
+    }
+    catch(std::exception &e)
+    {
       return;
     }
 
@@ -1194,27 +1209,84 @@ void Filesys::Mkdir(std::vector<std::string>& argv)
       if (newCluster != 0)
       {
         entry->SetClus(newCluster);
+        entry->name = fixedName;
         FileEntry* level = AddEntry(entry->clus,".          ", DIRECT);
         FileEntry* topLevel = AddEntry(entry->clus,"..         ", DIRECT);
 
         if (level != NULL)
         {
           level->SetClus(newCluster);
-          CreateFile(*level);
+          SaveFileEntry(*level);
           delete level;
         }
         if (topLevel != NULL)
         {
           topLevel->SetClus(location == finfo_.RootClus ? 0 : location);
           topLevel->entryLoc += 32;
-          CreateFile(*topLevel);
+          SaveFileEntry(*topLevel);
           delete topLevel;
         }
-        CreateFile(*entry);
+        SaveFileEntry(*entry);
       }
       delete entry;
     }
   }
+}
+
+std::string Filesys::ValidateFileName(std::string name)
+{
+  size_t invalidChars = name.find_first_of("/ \"*+`-;:<>=?", 0);
+
+  if (invalidChars != std::string::npos)
+  {
+    std::cout << "Invalid Filename" << std::endl;
+    throw std::exception();
+  }
+
+  size_t dotPos = name.find_first_of(".", 0);
+  char fixedName[11];
+  std::string originalName = name;
+
+  if (dotPos == 0)
+  {
+    std::cout << "Invalid Filename" << std::endl;
+    throw std::exception();
+  }
+
+  if (dotPos != std::string::npos)
+  {
+    if (name.length() - (dotPos + 1) != 3)
+    {
+      std::cout << "Invalid Filename" << std::endl;
+      throw std::exception();
+    }
+
+    std::string postfix = name.substr(dotPos + 1, name.length());
+    name = name.substr(0, dotPos);
+
+    for (size_t i = 0; i < 8; ++i)
+    {
+      if (i >= name.length()) 
+        fixedName[i] = ' ';
+      else
+        fixedName[i] = name[i];
+    }
+    for (size_t i = 8; i < 11; ++i)
+    {
+      fixedName[i] = postfix[i - 8];
+    }
+  }
+  else
+  {
+    for (size_t i = 0; i < 11; ++i)
+    {
+      if (i >= name.length())
+        fixedName[i] = ' ';
+      else
+        fixedName[i] = name[i];
+    }
+  }
+  return fixedName;
 }
 
 void Filesys::Create(std::vector<std::string>& argv)
@@ -1240,58 +1312,23 @@ void Filesys::Create(std::vector<std::string>& argv)
 
     std::string name = address.back();
     
-    size_t dotPos = name.find_first_of(".", 0);
-    char fixedName[11];
-    std::string originalName = name;
-
-    if (dotPos == 0)
+    std::string fixedName; 
+    try
     {
-      std::cout << "Invalid Filename" << std::endl;
+      fixedName = ValidateFileName(name);
+    }
+    catch(std::exception &e)
+    {
       return;
     }
 
-    if (dotPos != std::string::npos)
-    {
-      if (name.length() - (dotPos + 1) != 3)
-      {
-        std::cout << "Invalid Filename" << std::endl;
-        return;
-      }
-
-      std::string postfix = name.substr(dotPos + 1, name.length());
-      name = name.substr(0, dotPos);
-
-      for (size_t i = 0; i < 8; ++i)
-      {
-        if (i >= name.length()) 
-          fixedName[i] = ' ';
-        else
-          fixedName[i] = name[i];
-      }
-      for (size_t i = 8; i < 11; ++i)
-      {
-        fixedName[i] = postfix[i - 8];
-      }
-    }
-    else
-    {
-      for (size_t i = 0; i < 11; ++i)
-      {
-        if (i >= name.length())
-          fixedName[i] = ' ';
-        else
-          fixedName[i] = name[i];
-      }
-    }
-
-    // Other Validations needed
-    FileEntry* entry = AddEntry(location, originalName, 0);
+    FileEntry* entry = AddEntry(location, name, 0);
 
     if (entry != NULL)
     {
       entry->SetClus(0);
       entry->name = fixedName;
-      CreateFile(*entry);
+      SaveFileEntry(*entry);
       delete entry;
     }
   }
@@ -1352,7 +1389,7 @@ void Filesys::Rm(std::vector<std::string>& argv)
     }
 
     entry->name[0] = 0xe5;
-    CreateFile(*entry);
+    SaveFileEntry(*entry);
 
     if (entry->clus != 0)
       DeallocateChain(entry->clus);
@@ -1410,13 +1447,109 @@ void Filesys::Rmdir(std::vector<std::string>& argv)
     }
 
     entry->name[0] = 0xe5;
-    CreateFile(*entry);
+    SaveFileEntry(*entry);
 
     if (entry->clus != 0)
       DeallocateChain(entry->clus);
 
     delete entry;
   }
+}
+
+void Filesys::Undelete(std::vector<std::string>&)
+{
+  uint32_t location = cwd_;
+  uint32_t endOfFat = finfo_.GetEndOfFat();
+  uint32_t maxCount = 9;
+  uint16_t count = 0;
+
+  std::list<FileEntry>* allist = GetFileList(location);
+
+  for (FileEntry e : *allist)
+  {
+    if (e.GetShortName().substr(0,11) == "recovere.d_")
+      ++count;
+  }
+
+  delete allist;
+
+  if (count > maxCount)
+    return;
+
+  std::list<FileEntry>* delist = GetFileList(location, true);
+
+  for (FileEntry e : *delist)
+  {
+    if ((unsigned char)e.name[0] == 0xe5)
+    {
+      uint32_t clusterCount = 1;
+
+      if ((e.attr & DIRECT) != DIRECT)
+      {
+        clusterCount = ceil((float)e.size / (finfo_.BytesPerSec * 
+                                             finfo_.SecPerClus));
+      }
+
+      uint32_t currentCluster = e.clus;
+      uint32_t nextCluster;
+      bool boundError = false;
+
+      if (currentCluster != 0)
+      {
+        while (GetNextClus(currentCluster) != 0)
+        {
+
+          ++currentCluster;
+          if (currentCluster > endOfFat)
+          {
+            boundError = true;
+            break;
+          }
+        }
+
+        if (boundError)
+          continue;
+
+        e.clus = currentCluster;
+
+        for (uint32_t i = 0; i < clusterCount; ++i)
+        {
+          if (i == clusterCount - 1)
+          {
+            SetNextClus(currentCluster, 0xFFFFFFFF);
+          }
+          else
+          {
+            while (GetNextClus(nextCluster) != 0)
+            {
+              ++nextCluster;
+              if (nextCluster > endOfFat)
+              {
+                boundError = true;
+                break;
+              }
+            }
+
+            if (boundError)
+              break;
+            std::cout << currentCluster << std::endl;
+            SetNextClus(currentCluster, nextCluster);
+            currentCluster = nextCluster;
+          }
+        }
+      }
+
+      ++count;
+      std::ostringstream number;
+      number << count;
+      e.name = "RECOVERED_" + number.str();
+      SaveFileEntry(e);
+
+      if (count >= maxCount)
+        break;
+    }
+  }
+  delete delist;
 }
 
 void Filesys::Help(std::vector<std::string>&)
