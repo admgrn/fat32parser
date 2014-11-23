@@ -1343,14 +1343,14 @@ void Filesys::Undelete(std::vector<std::string>&)
 {
   uint32_t location = cwd_;
   uint32_t endOfFat = finfo_.GetEndOfFat();
-  uint32_t maxCount = 9;
+  uint32_t maxCount = 99;
   uint16_t count = 0;
 
   std::list<FileEntry>* allist = GetFileList(location);
 
   for (FileEntry e : *allist)
   {
-    if (e.GetShortName().substr(0,11) == "recovere.d_")
+    if (e.GetShortName().substr(0, 6) == "recvd_")
       ++count;
   }
 
@@ -1426,7 +1426,7 @@ void Filesys::Undelete(std::vector<std::string>&)
       ++count;
       std::ostringstream number;
       number << count;
-      e.name = "RECOVERED_" + number.str();
+      e.name = "RECVD_" + number.str();
       SaveFileEntry(e);
 
       if (count >= maxCount)
