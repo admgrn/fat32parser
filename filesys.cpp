@@ -62,6 +62,7 @@ Filesys::Filesys(std::string fname) : mFilesys_(0),
   functions_.insert(std::make_pair("read", &Filesys::Read));
   functions_.insert(std::make_pair("write", &Filesys::Write));
   functions_.insert(std::make_pair("mkdir", &Filesys::Mkdir));
+  functions_.insert(std::make_pair("rm", &Filesys::Rm));
   functions_.insert(std::make_pair("create", &Filesys::Create));
   functions_.insert(std::make_pair("undelete", &Filesys::Undelete));
   functions_.insert(std::make_pair("help", &Filesys::Help));
@@ -635,6 +636,63 @@ void Filesys::SaveFileEntry(FileEntry& entry)
   WriteValue(&(entry.wrtDate), 1, loc + 24, 2);
   WriteValue(&(entry.lo), 1, loc + 26, 2);
   WriteValue(&(entry.size), 1, loc + 28, 4);
+}
+
+// Validates file name according to specifications
+std::string Filesys::ValidateFileName(std::string name)
+{
+  size_t invalidChars = name.find_first_of("/ \"*+`-;:<>=?", 0);
+
+  if (invalidChars != std::string::npos)
+  {
+    std::cout << "Invalid Filename" << std::endl;
+    throw std::exception();
+  }
+
+  size_t dotPos = name.find_first_of(".", 0);
+  char fixedName[11];
+  std::string originalName = name;
+
+  if (dotPos == 0)
+  {
+    std::cout << "Invalid Filename" << std::endl;
+    throw std::exception();
+  }
+
+  if (dotPos != std::string::npos)
+  {
+    if (name.length() - (dotPos + 1) != 3)
+    {
+      std::cout << "Invalid Filename" << std::endl;
+      throw std::exception();
+    }
+
+    std::string postfix = name.substr(dotPos + 1, name.length());
+    name = name.substr(0, dotPos);
+
+    for (size_t i = 0; i < 8; ++i)
+    {
+      if (i >= name.length()) 
+        fixedName[i] = ' ';
+      else
+        fixedName[i] = name[i];
+    }
+    for (size_t i = 8; i < 11; ++i)
+    {
+      fixedName[i] = postfix[i - 8];
+    }
+  }
+  else
+  {
+    for (size_t i = 0; i < 11; ++i)
+    {
+      if (i >= name.length())
+        fixedName[i] = ' ';
+      else
+        fixedName[i] = name[i];
+    }
+  }
+  return fixedName;
 }
 
 // Allocates a cluster and returns the new cluster number
@@ -1235,62 +1293,6 @@ void Filesys::Mkdir(std::vector<std::string>& argv)
   }
 }
 
-std::string Filesys::ValidateFileName(std::string name)
-{
-  size_t invalidChars = name.find_first_of("/ \"*+`-;:<>=?", 0);
-
-  if (invalidChars != std::string::npos)
-  {
-    std::cout << "Invalid Filename" << std::endl;
-    throw std::exception();
-  }
-
-  size_t dotPos = name.find_first_of(".", 0);
-  char fixedName[11];
-  std::string originalName = name;
-
-  if (dotPos == 0)
-  {
-    std::cout << "Invalid Filename" << std::endl;
-    throw std::exception();
-  }
-
-  if (dotPos != std::string::npos)
-  {
-    if (name.length() - (dotPos + 1) != 3)
-    {
-      std::cout << "Invalid Filename" << std::endl;
-      throw std::exception();
-    }
-
-    std::string postfix = name.substr(dotPos + 1, name.length());
-    name = name.substr(0, dotPos);
-
-    for (size_t i = 0; i < 8; ++i)
-    {
-      if (i >= name.length()) 
-        fixedName[i] = ' ';
-      else
-        fixedName[i] = name[i];
-    }
-    for (size_t i = 8; i < 11; ++i)
-    {
-      fixedName[i] = postfix[i - 8];
-    }
-  }
-  else
-  {
-    for (size_t i = 0; i < 11; ++i)
-    {
-      if (i >= name.length())
-        fixedName[i] = ' ';
-      else
-        fixedName[i] = name[i];
-    }
-  }
-  return fixedName;
-}
-
 void Filesys::Create(std::vector<std::string>& argv)
 {
   if (argv.size() != 1)
@@ -1431,6 +1433,77 @@ void Filesys::Undelete(std::vector<std::string>&)
     }
   }
   delete delist;
+}
+
+void Filesys::Rm(std::vector<std::string>& argv)
+{
+  uint32_t location = cwd_;
+
+  if (argv.size() == 0)
+  {
+    std::cout << "Usage: rm <file_name>\n";
+    return;
+  }
+
+  // maybe have code to parse the input in case file has leading dir
+  // for loop to allow removing multiple files at once
+  for (uint32_t i=0; i < argv.size(); i++)
+  {
+    std::list<FileEntry>::iterator iter = openTable_.begin();
+    std::string name = argv[i];
+
+    // to check if file is open, and closing befire removing
+    while( iter != openTable_.end() )
+    {
+      if ((*iter).GetShortName() == name)
+      {
+        Close(argv);
+        break;
+      }
+      iter++;
+    }
+
+    std::list<FileEntry>* list = GetFileList(location);
+    uint32_t count = 0;
+    bool found = false;
+
+    for (FileEntry e : *list)
+    {
+      if (e.GetShortName() == name)
+      {
+        found = true;
+
+        if (e.clus != 0)
+        {
+          uint32_t currCluster = e.clus;
+          uint32_t lastCluster;
+
+          do
+          {
+            lastCluster = currCluster;
+            currCluster = GetNextClus(currCluster);
+            SetNextClus(lastCluster, 0);
+            UpdateClusCount([] (uint32_t value) { return value + 1;});
+            count ++;
+          } while (currCluster < FATEND);
+        } 
+        
+        e.name[0] = 0xe5;
+        SaveFileEntry(e);
+        break;
+      }
+      iter++;
+    }
+
+    delete list;
+
+    if (!found)
+    {
+      std::cout << "File " << name << " not found!\n";
+      return;
+    }
+
+  }
 }
 
 void Filesys::Help(std::vector<std::string>&)

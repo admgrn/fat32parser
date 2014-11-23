@@ -136,6 +136,7 @@ class Filesys
     void Open(std::vector<std::string>&);
     void Close(std::vector<std::string>&);
     void Read(std::vector<std::string>&);
+    void Rm(std::vector<std::string>&);
     void Write(std::vector<std::string>&);
     void Undelete(std::vector<std::string>&);
     void Help(std::vector<std::string>&);
