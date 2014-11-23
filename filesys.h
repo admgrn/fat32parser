@@ -113,7 +113,6 @@ class Filesys
     uint32_t GetNextClus(uint32_t);
     void SetNextClus(uint32_t, uint32_t);
     uint32_t AllocateCluster(uint32_t = 0);
-    void DeallocateChain(uint32_t);
     void ZeroOutCluster(uint32_t);
     std::string ValidateFileName(std::string);
     std::list<FileEntry>* GetFileList(uint32_t, 
@@ -138,8 +137,6 @@ class Filesys
     void Close(std::vector<std::string>&);
     void Read(std::vector<std::string>&);
     void Write(std::vector<std::string>&);
-    void Rm(std::vector<std::string>&);
-    void Rmdir(std::vector<std::string>&);
     void Undelete(std::vector<std::string>&);
     void Help(std::vector<std::string>&);
 };
