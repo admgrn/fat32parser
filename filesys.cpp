@@ -1381,7 +1381,6 @@ void Filesys::Undelete(std::vector<std::string>&)
       {
         while (GetNextClus(currentCluster) != 0)
         {
-
           ++currentCluster;
           if (currentCluster > endOfFat)
           {
@@ -1389,6 +1388,8 @@ void Filesys::Undelete(std::vector<std::string>&)
             break;
           }
         }
+
+        nextCluster = currentCluster + 1;
 
         if (boundError)
           continue;
@@ -1419,6 +1420,7 @@ void Filesys::Undelete(std::vector<std::string>&)
             SetNextClus(currentCluster, nextCluster);
             UpdateClusCount([] (uint32_t value) {return value - 1;});
             currentCluster = nextCluster;
+            ++nextCluster;
           }
         }
       }
@@ -1472,6 +1474,9 @@ void Filesys::Rm(std::vector<std::string>& argv)
     {
       if (e.GetShortName() == name)
       {
+        if ((e.attr & DIRECT) == DIRECT)
+          continue;
+
         found = true;
 
         if (e.clus != 0)
