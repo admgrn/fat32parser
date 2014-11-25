@@ -651,7 +651,9 @@ std::string Filesys::ValidateFileName(std::string name)
   }
 
   size_t dotPos = name.find_first_of(".", 0);
-  char fixedName[11];
+  char fixedName[12];
+  fixedName[11] = '\0';
+
   std::string originalName = name;
 
   if (dotPos == 0)
@@ -662,7 +664,7 @@ std::string Filesys::ValidateFileName(std::string name)
 
   if (dotPos != std::string::npos)
   {
-    if (name.length() - (dotPos + 1) != 3)
+    if (name.length() - (dotPos + 1) > 3)
     {
       std::cout << "Invalid Filename" << std::endl;
       throw std::exception();
@@ -680,11 +682,20 @@ std::string Filesys::ValidateFileName(std::string name)
     }
     for (size_t i = 8; i < 11; ++i)
     {
-      fixedName[i] = postfix[i - 8];
+      if (i - 8 >= postfix.length())
+        fixedName[i] = ' ';
+      else
+        fixedName[i] = postfix[i - 8];
     }
   }
   else
   {
+    if (name.length() > 8)
+    {
+      std::cout << "Invalid Filename" << std::endl;
+      throw std::exception();
+    }
+
     for (size_t i = 0; i < 11; ++i)
     {
       if (i >= name.length())
@@ -693,7 +704,9 @@ std::string Filesys::ValidateFileName(std::string name)
         fixedName[i] = name[i];
     }
   }
-  return fixedName;
+
+  std::string output(fixedName);
+  return output;
 }
 
 // Allocates a cluster and returns the new cluster number
@@ -804,7 +817,8 @@ Filesys::FileEntry* Filesys::AddEntry(uint32_t location, std::string name,
 
   FileEntry entry = list->front();
 
-  char value[11];
+  char value[12];
+  value[11] = '\0';
   std::transform(name.begin(), name.end(), name.begin(), 
                 ::toupper);
 
@@ -1019,6 +1033,7 @@ void Filesys::Open(std::vector<std::string>& argv)
       if (e.GetShortName() == name)
       {
         std::cout << "File Already Open" << std::endl;
+        delete list;
         return;
       }
     }
@@ -1113,7 +1128,8 @@ void Filesys::Read(std::vector<std::string>& argv)
 
     uint32_t start = std::stoi(argv[1]);
     uint32_t length = std::stoi(argv[2]);
-    char* readIn = new char[length];
+    char* readIn = new char[length + 1];
+    readIn[length] = '\0';
     uint32_t amountRead = FileOperate(readIn, start, length, *iter, 
               &Filesys::ReadValue<char>);
     for (uint32_t i = 0; i < amountRead; ++i)
@@ -1215,7 +1231,9 @@ void Filesys::Write(std::vector<std::string>& argv)
       SaveFileEntry(*iter);
     }
 
-    char* writeIn = new char[length];
+    char* writeIn = new char[length + 1];
+    writeIn[length] = '\0';
+
     strcpy(writeIn, input.c_str());
     if (FileOperate(writeIn, start, length, *iter, 
               &Filesys::WriteValue<char>) == 0)
@@ -1427,8 +1445,8 @@ void Filesys::Undelete(std::vector<std::string>&)
 
       ++count;
       std::ostringstream number;
-      number << count;
-      e.name = "RECVD_" + number.str();
+      number << "RECVD_" <<  count;
+      e.name = number.str() + '\0';
       SaveFileEntry(e);
 
       if (count >= maxCount)
@@ -1456,11 +1474,13 @@ void Filesys::Rm(std::vector<std::string>& argv)
     std::string name = argv[i];
 
     // to check if file is open, and closing befire removing
-    while( iter != openTable_.end() )
+    while(iter != openTable_.end())
     {
       if ((*iter).GetShortName() == name)
       {
-        Close(argv);
+        std::vector<std::string> list;
+        list.push_back(argv[i]);
+        Close(list);
         break;
       }
       iter++;
