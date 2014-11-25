@@ -1446,7 +1446,12 @@ void Filesys::Undelete(std::vector<std::string>&)
       ++count;
       std::ostringstream number;
       number << "RECVD_" <<  count;
-      e.name = number.str() + '\0';
+      size_t padding = 11 - number.str().length();
+      e.name = number.str();
+
+      for (size_t i = 0; i < padding; ++i)
+        e.name += ' ';
+
       SaveFileEntry(e);
 
       if (count >= maxCount)
@@ -1510,7 +1515,7 @@ void Filesys::Rm(std::vector<std::string>& argv)
             currCluster = GetNextClus(currCluster);
             SetNextClus(lastCluster, 0);
             UpdateClusCount([] (uint32_t value) { return value + 1;});
-            count ++;
+            count++;
           } while (currCluster < FATEND);
         } 
         
