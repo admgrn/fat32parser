@@ -656,7 +656,7 @@ std::string Filesys::ValidateFileName(std::string name)
 
   std::string originalName = name;
 
-  if (dotPos == 0)
+  if (dotPos == 0 || dotPos == name.length() - 1)
   {
     std::cout << "Invalid Filename" << std::endl;
     throw std::exception();
