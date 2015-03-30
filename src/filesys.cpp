@@ -31,7 +31,7 @@ Filesys::Filesys(std::string fname) : mFilesys_(0),
 {
   struct stat fstatus;
 
-  // Open File Descripter
+  // Open File Descriptor
   fd_ = open(fname_.c_str(), O_RDWR);
 
   if (fd_ < 0)
