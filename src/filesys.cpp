@@ -204,7 +204,6 @@ std::list<Filesys::FileEntry>* Filesys::GetFileList(uint32_t cluster,
       if ((name[0] != 0 && (uint8_t)name[0] != DEALLOC && !getDealloc) ||
           ((name[0] == 0 || (uint8_t)name[0] == DEALLOC) && getDealloc))
       {
-        
         FileEntry entry(name, attr, lo, hi, size, location + (32 * i));
         list->push_back(entry);
       }
@@ -1211,7 +1210,6 @@ void Filesys::Write(std::vector<std::string>& argv)
       }
     }
     currAllocated *= finfo_.SecPerClus * finfo_.BytesPerSec;
-
 
     if (totalSize > currAllocated)
     {
